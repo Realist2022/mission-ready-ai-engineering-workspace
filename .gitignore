@@ -1,0 +1,16 @@
+# Virtual environment (contains thousands of dependency files)
+.venv/
+
+# Environment variables / Secrets (never commit API keys or connection strings!)
+.env
+
+# Datasets (keeps heavy files or model data out of git history)
+dataSet/
+
+# Python caching and compiled files
+__pycache__/
+*.pyc
+
+# Local test output images (prevents bloating the repo with generated run results)
+*.png
+test_leaf.jpg
