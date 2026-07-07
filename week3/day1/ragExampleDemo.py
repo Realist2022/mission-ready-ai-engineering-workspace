@@ -1,5 +1,7 @@
 my_api_key = ""
 
+from dotenv import load_dotenv
+load_dotenv()
 
 """
 PIPELINE FLOW:
@@ -15,7 +17,7 @@ import uuid
 import os
 
 
-os.environ["OPENAI_API_KEY"] = my_api_key
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 
 # ---------------------------
@@ -163,7 +165,7 @@ def build_qa_system(vectordb, use_openai=True):
     """
     retriever = vectordb.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": 3}
+        search_kwargs={"k": 1}
     )
 
     system = {"retriever": retriever}
@@ -174,24 +176,47 @@ def build_qa_system(vectordb, use_openai=True):
                 model="gpt-4o-mini",
                 temperature=0
             )
-            
+
+                   # 🔥 FUNNY PROMPT TEMPLATE
             prompt_template = PromptTemplate.from_template(
-                """Based on the following context, answer the question.
-                
+                """You are a helpful assistant who must answer the question 
+using ONLY the provided context. However, you must also be funny — 
+add light humour, playful commentary, or dad‑jokes, while still giving 
+a correct and grounded answer.
+
 Context:
 {context}
 
 Question: {question}
 
-Answer:"""
+Funny Answer:"""
             )
+
             system.update({"llm": llm, "prompt": prompt_template})
-            print("âœ… OpenAI LLM successfully configured!")
+            print("✔ OpenAI LLM successfully configured with FUNNY mode!")
         except Exception as e:
             print(f"OpenAI setup failed: {e}")
             print("Continuing with retrieval-only mode...\n")
     
-    return system
+    return system     
+            
+#             prompt_template = PromptTemplate.from_template(
+#                 """Based on the following context, answer the question.
+                
+# Context:
+# {context}
+
+# Question: {question}
+
+# Answer:"""
+#             )
+#             system.update({"llm": llm, "prompt": prompt_template})
+#             print("âœ… OpenAI LLM successfully configured!")
+#         except Exception as e:
+#             print(f"OpenAI setup failed: {e}")
+#             print("Continuing with retrieval-only mode...\n")
+    
+#     return system
 
 
 # ---------------------------
