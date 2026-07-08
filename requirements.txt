@@ -1,0 +1,30 @@
+# Core deep learning (vision model)
+torch
+torchvision
+pillow
+matplotlib
+numpy
+
+# Configuration & validation
+python-dotenv
+pydantic
+jsonschema
+
+# Embeddings
+sentence-transformers
+
+# Vector databases
+chromadb
+faiss-cpu
+
+# LangChain / LangGraph (RAG & agents)
+langchain
+langchain-core
+langchain-community
+langchain-huggingface
+langchain-openai
+langchain-text-splitters
+langgraph
+
+# Sparse retrieval (BM25)
+rank-bm25

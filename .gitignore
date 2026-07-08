@@ -14,3 +14,5 @@ __pycache__/
 # Local test output images (prevents bloating the repo with generated run results)
 *.png
 test_leaf.jpg
+
+*.pth
