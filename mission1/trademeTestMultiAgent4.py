@@ -1,11 +1,46 @@
 import os
 import json
 from typing import List, Dict, Tuple
-from matplotlib import category
 from openai import OpenAI
 from pypdf import PdfReader
 from jsonschema import validate, ValidationError
 from typer import prompt
+
+
+# ----------------------------------------------------------------------
+# 0. GLOBAL CONFIGURATION
+# ----------------------------------------------------------------------
+
+# from dotenv import load_dotenv
+# load_dotenv()   
+
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# MODEL_NAME = "gpt-4o-mini"
+# MODEL_BASE_URL = "https://api.openai.com/v1"
+# MODEL_API_KEY = OPENAI_API_KEY
+# MODEL_TEMPERATURE = float(0.0)
+
+# Model Engine Settings
+MODEL_NAME = "llama3.2:latest"
+MODEL_BASE_URL = "http://localhost:11434/v1"
+MODEL_API_KEY = "ollama"
+MODEL_TEMPERATURE = float(0.0)
+
+# Weight Balancing (Ensure they add up to 1.0)
+SKILLS_WEIGHT = 0.60
+EXPERIENCE_WEIGHT = 0.40
+
+# (Validate they add up to 1.0)
+if (SKILLS_WEIGHT + EXPERIENCE_WEIGHT) != 1.0:
+    print("WARNING: Your weights do not add up to 1.0!")
+
+# Default Test Files
+DEFAULT_JOB_DIR = "tradeMeJobListing"
+DEFAULT_JOB_FILE = "Job_listing.pdf"
+DEFAULT_CV_DIR = "tradeMeCV"
+DEFAULT_CV_FILE = "Sonny H Tapara CV.pdf"
 
 # ----------------------------------------------------------------------
 # 1. STRUCTURAL SCHEMAS & AGENT PROMPTS (OPTIMIZED FOR LOCAL LLMS)
@@ -38,15 +73,16 @@ You are an Expert Recruitment Assessor specializing in Professional Seniority an
 Your task is to calculate the explicit years of relevant target-domain experience from the CV against the Job Description requirements.
 
 CONTEXT ENGINEERING INSTRUCTIONS:
-1. Identify Target Demands: Scan the Job Description for explicit experience duration demands. If a range is given (e.g., "3-5 years"), extract the lower boundary (3.0) as the target requirement.
+1. Identify Target Demands: Scan the Job Description for explicit experience duration demands. If a range is given (e.g., "X to Y years"), extract the lower boundary (X) as the target requirement. Do NOT use this abstract example as your answer.
 2. Filter for Domain Relevance: Scan the CV specifically for past roles, industries, or responsibilities that match the domain of the target job listing. 
-3. Perform Date Math: Convert months into decimals (e.g., 6 months = 0.5 years). Sum the total duration of these relevant roles.
+3. Perform Date Math: For every relevant role, extract the start date and end date. Calculate the duration in months. Divide the total months by 12 to get the decimal years. 
 4. Strict irrelevance exclusion: Do NOT include historical roles that bear zero translatable relationship to the target position's operational domain.
 
 You MUST return ONLY a single JSON object matching this exact schema:
 {
   "requirement_category": "Seniority & Experience",
-  "candidate_years_extracted": <float: total years of relevant domain experience found in the CV>,
+  "calculation_scratchpad": "<string: You MUST write out the math here. List the start and end dates of the roles, calculate the months, and show the division. DO NOT copy this sentence.>",
+  "candidate_years_extracted": <float: total years of relevant domain experience found in the CV, rounded to one decimal>,
   "target_years_required": <float: target minimum years of experience demanded by the job>,
   "rationale": "A concise 1-sentence explanation of the specific roles and timelines calculated."
 }
@@ -88,13 +124,14 @@ class BaseAgent:
         self,
         client: OpenAI,
         system_prompt: str,
-        temperature: float = 0.0,
+        temperature: float = MODEL_TEMPERATURE,
         force_json: bool = False,
+        model: str = MODEL_NAME,
     ):
         self.client = client
         self.system_prompt = system_prompt
         self.temperature = temperature
-        self.model = "llama3.2:latest"
+        self.model = model
         self.force_json = force_json
 
     def _call_llm(self, user_content: str) -> str:
@@ -113,16 +150,16 @@ class BaseAgent:
         )
         return resp.choices[0].message.content.strip()
 
-
+# Composition: used BaseAgent as a component within ExecutorAgent to handle different categories of tasks.
 class ExecutorAgent:
     """Orchestrates structured task execution by dynamically switching target systems."""
 
     def __init__(self, client: OpenAI):
         self.skills_agent = BaseAgent(
-            client, SKILLS_EXECUTOR_PROMPT, temperature=0.0, force_json=True
+            client, SKILLS_EXECUTOR_PROMPT, temperature=MODEL_TEMPERATURE, force_json=True
         )
         self.exp_agent = BaseAgent(
-            client, EXPERIENCE_EXECUTOR_PROMPT, temperature=0.0, force_json=True
+            client, EXPERIENCE_EXECUTOR_PROMPT, temperature=MODEL_TEMPERATURE, force_json=True
         )
 
     def execute(self, category: str, job_desc: str, cv_text: str) -> str:
@@ -132,14 +169,7 @@ class ExecutorAgent:
         else:
             return self.exp_agent._call_llm(prompt)
 
-    # def execute(self, category: str, job_desc: str, cv_text: str) -> str:
-    #     prompt = f"Job Context:\n{job_desc}\n\nCandidate CV:\n{cv_text}"
-    #     if "skill" in category.lower():
-    #         return self.skills_agent._call_llm(prompt)
-    #     else:
-    #         return self.exp_agent._call_llm(prompt)
-
-
+# Inheritance: Used specifically for the VerifierAgent to extend BaseAgent, adding a verification method.
 class VerifierAgent(BaseAgent):
     def verify(self, category: str, executor_output: str) -> Tuple[bool, str]:
         prompt = f"Category:\n{category}\n\nExecutor JSON Data:\n{executor_output}"
@@ -153,7 +183,7 @@ class VerifierAgent(BaseAgent):
 class RelevanceScoringEngine:
     """Natively processes validated semantic facts using deterministic code equations."""
 
-    def __init__(self, skills_weight: float = 0.60, experience_weight: float = 0.40):
+    def __init__(self, skills_weight: float = SKILLS_WEIGHT, experience_weight: float = EXPERIENCE_WEIGHT):
         self.skills_weight = skills_weight
         self.experience_weight = experience_weight
 
@@ -199,12 +229,12 @@ class RelevanceScoringEngine:
 
 
 # ----------------------------------------------------------------------
-# 4. ORCHESTRATOR CLASS (WITH OPTION B IMPLEMENTED)
+# 4. ORCHESTRATOR CLASS FOR MULTI-AGENT PIPELINE
 # ----------------------------------------------------------------------
 class MultiAgentJobMatcher:
     """Manages the agent workflow to gather validated metrics data using targeted schemas."""
 
-    # Explicit schema for the Core Technical Skills agent output
+    # Explicit schema for the Core Technical Skills agent output verification
     SKILLS_SCHEMA = {
         "type": "object",
         "properties": {
@@ -222,17 +252,19 @@ class MultiAgentJobMatcher:
         "additionalProperties": False,
     }
 
-    # Explicit schema for the Seniority & Experience agent output
+    # Explicit schema for the Seniority & Experience agent output verification
     EXP_SCHEMA = {
         "type": "object",
         "properties": {
             "requirement_category": {"type": "string"},
+            "calculation_scratchpad": {"type": "string"},
             "candidate_years_extracted": {"type": "number"},
             "target_years_required": {"type": "number"},
             "rationale": {"type": "string"},
         },
         "required": [
             "requirement_category",
+            "calculation_scratchpad",
             "candidate_years_extracted",
             "target_years_required",
             "rationale",
@@ -241,7 +273,7 @@ class MultiAgentJobMatcher:
     }
 
     def __init__(self):
-        self.client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        self.client = OpenAI(base_url=MODEL_BASE_URL, api_key=MODEL_API_KEY)
         self.executor = ExecutorAgent(self.client)
         self.verifier = VerifierAgent(self.client, VERIFIER_SYSTEM_PROMPT)
 
@@ -287,19 +319,22 @@ if __name__ == "__main__":
     project_root = os.path.dirname(script_dir)
 
     job_pdf = os.path.join(
-        project_root, "dataSet", "tradeMeJobListing", "job_listing.pdf"
+        project_root, "dataSet", DEFAULT_JOB_DIR, DEFAULT_JOB_FILE
     )
-    cv_pdf = os.path.join(project_root, "dataSet", "trademeCV", "Sonny H Tapara CV.pdf")
+    cv_pdf = os.path.join(project_root, "dataSet", DEFAULT_CV_DIR, DEFAULT_CV_FILE)
 
     if not os.path.exists(job_pdf) or not os.path.exists(cv_pdf):
         print(
-            "Error: Could not find job_listing.pdf or Sonny H Tapara CV.pdf. Check your dataSet path setup."
+            f"Error: Could not find {DEFAULT_JOB_FILE} or {DEFAULT_CV_FILE}. Check your dataSet path setup."
         )
         exit(1)
 
     # Step 1: Extract Texts
     job_desc = DocumentParser.extract_text_from_pdf(job_pdf)
     cv_text = DocumentParser.extract_text_from_pdf(cv_pdf)
+
+    # Print model engine details for debugging
+    print(f"Using Model Engine: {MODEL_NAME} | Temperature: {MODEL_TEMPERATURE}")
 
     # Step 2: Extract Metrics using Multi-Agent Pipeline
     matcher = MultiAgentJobMatcher()
@@ -314,7 +349,7 @@ if __name__ == "__main__":
     print("-" * 50)
 
     # Step 3: Run Deterministic Calculations via the Decoupled Calculator Class
-    scoring_engine = RelevanceScoringEngine(skills_weight=0.60, experience_weight=0.40)
+    scoring_engine = RelevanceScoringEngine(skills_weight=SKILLS_WEIGHT, experience_weight=EXPERIENCE_WEIGHT)
     report = scoring_engine.calculate_scorecard(extracted_data)
 
     # Print explicit scorecard output details
