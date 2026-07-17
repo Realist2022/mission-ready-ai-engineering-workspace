@@ -5,37 +5,41 @@ from openai import OpenAI
 from pypdf import PdfReader
 from jsonschema import validate, ValidationError
 from typer import prompt
+import time
 
 
 # ----------------------------------------------------------------------
 # 0. GLOBAL CONFIGURATION
 # ----------------------------------------------------------------------
 
-# from dotenv import load_dotenv
-# load_dotenv(override=True)
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# google_api_key = os.getenv('GOOGLE_API_KEY')
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# openai_api_key = os.getenv("OPENAI_API_KEY")
+google_api_key = os.getenv('GOOGLE_API_KEY')
 
-# GPT Model Engine Settings
-# MODEL_NAME = "gpt-4o"
+# MODEL_NAME = "gpt-4o-mini"
 # MODEL_BASE_URL = "https://api.openai.com/v1"
-# MODEL_API_KEY = OPENAI_API_KEY
+# MODEL_API_KEY = openai_api_key
 # MODEL_TEMPERATURE = float(0.0)
 
-# OLLAMA Model Engine Settings
+# Model Engine Settings
 MODEL_NAME = "llama3.2:latest"
 MODEL_BASE_URL = "http://localhost:11434/v1"
 MODEL_API_KEY = "ollama"
-MODEL_TEMPERATURE = float(0.0)
+MODEL_TEMPERATURE = 0.0
 
-# GOOGLE Model Engine Settings
-# MODEL_NAME = "gemini-3.1-flash-lite"
-# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-# MODEL_API_KEY = google_api_key
-# MODEL_TEMPERATURE = float(0.0)
+# --- TIER 2: VERIFIER ENGINE (Smart/Cloud Auditing) ---
+# VERIFIER_MODEL = "gpt-4o-mini"
+# VERIFIER_BASE_URL = "https://api.openai.com/v1" 
+# VERIFIER_API_KEY = openai_api_key
+# VERIFIER_TEMPERATURE = 0.2
 
+VERIFIER_MODEL = "gemini-2.5-flash-lite"
+VERIFIER_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/" 
+VERIFIER_API_KEY = google_api_key
+VERIFIER_TEMPERATURE = 0.2
 
 # Weight Balancing (Ensure they add up to 1.0)
 SKILLS_WEIGHT = 0.60
@@ -102,12 +106,16 @@ Rules:
 """
 
 VERIFIER_SYSTEM_PROMPT = """
-You are the Recruitment Data Verifier agent.
-Verify if the EXECUTOR's extracted metrics structurally make sense relative to the category.
+You are a strict Recruitment Auditor. 
+Your task is to fact-check the JSON output provided by an Extraction Agent against the original Job Description and Candidate CV.
+
+AUDIT CRITERIA:
+1. Hallucination Check: Did the agent invent a skill, tool, or timeline that does not explicitly exist in the CV text?
+2. Math & Logic Check: Does the calculation scratchpad accurately reflect the real dates in the CV? Did it extract the correct target from the Job Description?
 
 Respond in one of two formats ONLY:
 1) APPROVE
-2) REVISE
+2) REVISE: [Provide a 1-sentence explanation of the factual error, hallucination, or bad math]
 """
 
 
@@ -148,16 +156,34 @@ class BaseAgent:
             {"response_format": {"type": "json_object"}} if self.force_json else {}
         )
 
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=self.temperature,
-            **extra_args,
-        )
-        return resp.choices[0].message.content.strip()
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                # Attempt to call the API
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=self.temperature,
+                    **extra_args,
+                )
+                return resp.choices[0].message.content.strip()
+                
+            except Exception as e:
+                # Catch specifically the 429 Rate Limit Error
+                if "429" in str(e) or "RateLimitError" in type(e).__name__:
+                    wait_time = 15  # Wait 15 seconds before trying again
+                    print(f"\n[API SPEED LIMIT] Model {self.model} is busy. Waiting {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    # If it's a different error (like a bad API key), crash normally
+                    raise e
+                    
+        # If it fails 3 times in a row, finally give up
+        raise RuntimeError(f"Failed to get a response from {self.model} after {max_retries} attempts.")
 
 # Composition: used BaseAgent as a component within ExecutorAgent to handle different categories of tasks.
 class ExecutorAgent:
@@ -165,10 +191,10 @@ class ExecutorAgent:
 
     def __init__(self, client: OpenAI):
         self.skills_agent = BaseAgent(
-            client, SKILLS_EXECUTOR_PROMPT, temperature=MODEL_TEMPERATURE, force_json=True
+            client, SKILLS_EXECUTOR_PROMPT, model=MODEL_NAME, temperature=MODEL_TEMPERATURE, force_json=True
         )
         self.exp_agent = BaseAgent(
-            client, EXPERIENCE_EXECUTOR_PROMPT, temperature=MODEL_TEMPERATURE, force_json=True
+            client, EXPERIENCE_EXECUTOR_PROMPT, model=MODEL_NAME, temperature=MODEL_TEMPERATURE, force_json=True
         )
 
     def execute(self, category: str, job_desc: str, cv_text: str) -> str:
@@ -180,9 +206,36 @@ class ExecutorAgent:
 
 # Inheritance: Used specifically for the VerifierAgent to extend BaseAgent, adding a verification method.
 class VerifierAgent(BaseAgent):
-    def verify(self, category: str, executor_output: str) -> Tuple[bool, str]:
-        prompt = f"Category:\n{category}\n\nExecutor JSON Data:\n{executor_output}"
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        system_prompt: str,
+        temperature: float = VERIFIER_TEMPERATURE,
+        model: str = VERIFIER_MODEL,
+        force_json: bool = False,
+    ):
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        super().__init__(
+            client=client,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            model=model,
+            force_json=force_json,
+        )
+
+    def verify(self, category: str, job_desc: str, cv_text: str, executor_output: str) -> Tuple[bool, str]:
+        # Give the LLM the full context to perform the audit
+        prompt = (
+            f"Category Under Review:\n{category}\n\n"
+            f"--- ORIGINAL JOB DESCRIPTION ---\n{job_desc}\n\n"
+            f"--- ORIGINAL CANDIDATE CV ---\n{cv_text}\n\n"
+            f"--- AGENT EXTRACTED JSON TO AUDIT ---\n{executor_output}"
+        )
+        
         verdict = self._call_llm(prompt)
+        
+        # Check if the verdict starts with "APPROVE"
         return verdict.strip().upper().startswith("APPROVE"), verdict
 
 
@@ -284,7 +337,7 @@ class MultiAgentJobMatcher:
     def __init__(self):
         self.client = OpenAI(base_url=MODEL_BASE_URL, api_key=MODEL_API_KEY)
         self.executor = ExecutorAgent(self.client)
-        self.verifier = VerifierAgent(self.client, VERIFIER_SYSTEM_PROMPT)
+        self.verifier = VerifierAgent(base_url=VERIFIER_BASE_URL, api_key=VERIFIER_API_KEY, temperature=VERIFIER_TEMPERATURE, system_prompt=VERIFIER_SYSTEM_PROMPT)
 
     def extract_metrics(self, job_text: str, cv_text: str) -> List[Dict]:
         categories = ["Core Technical Skills", "Seniority & Experience"]
@@ -302,12 +355,13 @@ class MultiAgentJobMatcher:
                 else:
                     validate(instance=parsed, schema=self.EXP_SCHEMA)
 
-                # Advisory Verifier step
-                is_approved, verdict_text = self.verifier.verify(category, exec_output)
+                # --- FACT-CHECKING AUDITOR STEP ---
+                is_approved, verdict_text = self.verifier.verify(category, job_text, cv_text, exec_output)
+                
                 if not is_approved:
-                    print(
-                        f"[WARN] Verifier said REVISE for '{category}': {verdict_text}"
-                    )
+                    print(f"\n[AUDIT FAILED] The Verifier caught an error in '{category}':\n{verdict_text}\n")
+                else:
+                    print(f"[AUDIT PASSED] '{category}' extraction verified as factually accurate.")
 
                 validated_metrics.append(parsed)
 
@@ -316,6 +370,8 @@ class MultiAgentJobMatcher:
                     f"\n[DEBUG WARNING]: Validation Failed for {category}. Error: {e}"
                 )
                 print(f"[DEBUG WARNING]: Raw payload received: {exec_output}")
+
+            time.sleep(3)
 
         return validated_metrics
 
@@ -343,7 +399,8 @@ if __name__ == "__main__":
     cv_text = DocumentParser.extract_text_from_pdf(cv_pdf)
 
     # Print model engine details for debugging
-    print(f"Using Model Engine: {MODEL_NAME} | Temperature: {MODEL_TEMPERATURE}")
+    print(f"Using Model Engine: {MODEL_NAME} for evaluating job listing and CV | Temperature: {MODEL_TEMPERATURE}")
+    print(f"Using Verifier Engine: {VERIFIER_MODEL} for fact-checking | Temperature: {VERIFIER_TEMPERATURE}")
 
     # Step 2: Extract Metrics using Multi-Agent Pipeline
     matcher = MultiAgentJobMatcher()
