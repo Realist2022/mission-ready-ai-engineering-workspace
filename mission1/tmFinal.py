@@ -4,19 +4,18 @@ from typing import List, Dict, Tuple
 from openai import OpenAI
 from pypdf import PdfReader
 from jsonschema import validate, ValidationError
-from typer import prompt
 
 
 # ----------------------------------------------------------------------
 # 0. GLOBAL CONFIGURATION
 # ----------------------------------------------------------------------
 
-# from dotenv import load_dotenv
-# load_dotenv(override=True)
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# google_api_key = os.getenv('GOOGLE_API_KEY')
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+google_api_key = os.getenv('GOOGLE_API_KEY')
 
 # GPT Model Engine Settings
 # MODEL_NAME = "gpt-4o"
@@ -24,24 +23,23 @@ from typer import prompt
 # MODEL_API_KEY = OPENAI_API_KEY
 # MODEL_TEMPERATURE = float(0.0)
 
-# OLLAMA Model Engine Settings
-MODEL_NAME = "llama3.2:latest"
-MODEL_BASE_URL = "http://localhost:11434/v1"
-MODEL_API_KEY = "ollama"
+# GOOGLE Model Engine Settings
+MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+MODEL_API_KEY = google_api_key
 MODEL_TEMPERATURE = float(0.0)
 
-# GOOGLE Model Engine Settings
-# MODEL_NAME = "gemini-3.1-flash-lite"
-# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-# MODEL_API_KEY = google_api_key
-# MODEL_TEMPERATURE = float(0.0)
 
+# OLLAMA Model Engine Settings
+# MODEL_NAME = "llama3.2:latest"
+# MODEL_BASE_URL = "http://localhost:11434/v1"
+# MODEL_API_KEY = "ollama"
+# MODEL_TEMPERATURE = float(0.0)
 
 # Weight Balancing (Ensure they add up to 1.0)
 SKILLS_WEIGHT = 0.60
 EXPERIENCE_WEIGHT = 0.40
 
-# (Validate they add up to 1.0)
 if (SKILLS_WEIGHT + EXPERIENCE_WEIGHT) != 1.0:
     print("WARNING: Your weights do not add up to 1.0!")
 
@@ -50,6 +48,7 @@ DEFAULT_JOB_DIR = "tradeMeJobListing"
 DEFAULT_JOB_FILE = "Job_listing.pdf"
 DEFAULT_CV_DIR = "tradeMeCV"
 DEFAULT_CV_FILE = "Sonny H Tapara CV.pdf"
+
 
 # ----------------------------------------------------------------------
 # 1. STRUCTURAL SCHEMAS & AGENT PROMPTS (OPTIMIZED FOR LOCAL LLMS)
@@ -101,13 +100,21 @@ Rules:
 - Set numeric defaults to 0.0 if no explicit timelines are found.
 """
 
-VERIFIER_SYSTEM_PROMPT = """
-You are the Recruitment Data Verifier agent.
-Verify if the EXECUTOR's extracted metrics structurally make sense relative to the category.
+# New Dynamic RABCC Auditor Prompt Template
+VERIFIER_SYSTEM_PROMPT_TEMPLATE = """
+You are the Recruitment Data Verifier Agent. Your single role is to critically audit the EXECUTOR's JSON payload against the raw text contents using the structural RABCC framework standard.
 
-Respond in one of two formats ONLY:
-1) APPROVE
-2) REVISE
+TARGET INDUSTRY/DOMAIN CONTEXT: {domain_context}
+
+Evaluate the content payload based on these strict framework parameters:
+1. RELEVANCE & ACCURACY: Ensure the isolated metrics exactly match the raw text. For experience processing, explicitly check if 'candidate_years_extracted' matches the timeline shown in 'calculation_scratchpad'.
+2. RATIONALE AUDIT (BIAS): Inspect the 'rationale' text string. Ensure it remains objective. If the executor exhibited systemic processing bias by penalizing non-traditional CV layouts, formatting, or international terminology variations acceptable under this industry context, flag it for revision.
+3. OUTPUT COMPLETENESS: Ensure all required fields are fully populated and free of raw boilerplate sentences or abstract instructions.
+
+CRITICAL ARCHITECTURAL RULES:
+- Structural schema data type verification is managed deterministically by our Python code compilation layer; do not comment on JSON bracket formatting syntax or token structure.
+- If the text payload passes all content audits perfectly, reply with exactly one word: APPROVE
+- If you discover processing discrepancies, inaccurate math, or logical bias in the rationale, reply with: REVISE <concise reason>
 """
 
 
@@ -159,7 +166,7 @@ class BaseAgent:
         )
         return resp.choices[0].message.content.strip()
 
-# Composition: used BaseAgent as a component within ExecutorAgent to handle different categories of tasks.
+
 class ExecutorAgent:
     """Orchestrates structured task execution by dynamically switching target systems."""
 
@@ -178,8 +185,9 @@ class ExecutorAgent:
         else:
             return self.exp_agent._call_llm(prompt)
 
-# Inheritance: Used specifically for the VerifierAgent to extend BaseAgent, adding a verification method.
+
 class VerifierAgent(BaseAgent):
+    """Audits extracted executor metrics to cross-verify compliance."""
     def verify(self, category: str, executor_output: str) -> Tuple[bool, str]:
         prompt = f"Category:\n{category}\n\nExecutor JSON Data:\n{executor_output}"
         verdict = self._call_llm(prompt)
@@ -196,6 +204,14 @@ class RelevanceScoringEngine:
         self.skills_weight = skills_weight
         self.experience_weight = experience_weight
 
+    def _calculate_skills_score(self, matched: int, total: int) -> float:
+        return (matched / total * 100) if total > 0 else 0.0
+
+    def _calculate_experience_score(self, candidate_yrs: float, target_yrs: float) -> float:
+        if target_yrs <= 0:
+            return 0.0
+        return min((candidate_yrs / target_yrs) * 100, 100.0)
+
     def calculate_scorecard(self, validated_metrics: List[Dict]) -> Dict:
         total_skills_job = 0
         total_skills_cv = 0
@@ -205,22 +221,16 @@ class RelevanceScoringEngine:
         for metric in validated_metrics:
             category = metric.get("requirement_category", "").lower()
 
-            if "skill" in category or "competency" in category or "tool" in category or "framework" in category or "certification" in category or "methodology" in category:
+            if any(k in category for k in ["skill", "competency", "tool", "framework", "certification", "methodology"]):
                 total_skills_job = metric.get("total_requirements_in_job", 0)
                 total_skills_cv = metric.get("matched_requirements_in_cv", 0)
 
-            if "experience" in category or "senior" in category or "tenure" in category or "years" in category or "domain" in category or "relevant" in category:
+            if any(k in category for k in ["experience", "senior", "tenure", "years", "domain", "relevant"]):
                 candidate_years = float(metric.get("candidate_years_extracted", 0.0))
                 target_years = float(metric.get("target_years_required", 0.0))
 
-        skills_score = (
-            (total_skills_cv / total_skills_job * 100) if total_skills_job > 0 else 0.0
-        )
-        exp_score = (
-            min((candidate_years / target_years) * 100, 100.0)
-            if target_years > 0
-            else 0.0
-        )
+        skills_score = self._calculate_skills_score(total_skills_cv, total_skills_job)
+        exp_score = self._calculate_experience_score(candidate_years, target_years)
 
         final_relevance = (self.skills_weight * skills_score) + (
             self.experience_weight * exp_score
@@ -243,7 +253,6 @@ class RelevanceScoringEngine:
 class MultiAgentJobMatcher:
     """Manages the agent workflow to gather validated metrics data using targeted schemas."""
 
-    # Explicit schema for the Core Technical Skills agent output verification
     SKILLS_SCHEMA = {
         "type": "object",
         "properties": {
@@ -261,7 +270,6 @@ class MultiAgentJobMatcher:
         "additionalProperties": False,
     }
 
-    # Explicit schema for the Seniority & Experience agent output verification
     EXP_SCHEMA = {
         "type": "object",
         "properties": {
@@ -284,11 +292,26 @@ class MultiAgentJobMatcher:
     def __init__(self):
         self.client = OpenAI(base_url=MODEL_BASE_URL, api_key=MODEL_API_KEY)
         self.executor = ExecutorAgent(self.client)
-        self.verifier = VerifierAgent(self.client, VERIFIER_SYSTEM_PROMPT)
+        # Instantiate placeholder verifier; system prompt gets loaded dynamically below
+        self.verifier = VerifierAgent(self.client, system_prompt="")
 
-    def extract_metrics(self, job_text: str, cv_text: str) -> List[Dict]:
+    def extract_metrics(self, job_text: str, cv_text: str, industry_type: str = "Tech") -> List[Dict]:
+        """Runs the extraction pipeline under calibrated industry rules."""
         categories = ["Core Technical Skills", "Seniority & Experience"]
         validated_metrics = []
+
+        # Industry domain mapping strategy for verifier injection
+        domain_mappings = {
+            "Tech": "Look for explicit programming frameworks, cloud patterns, tooling compliance, and software architecture.",
+            "Trades": "Look for strict machinery tickets, specialized trade licenses, apprenticeship hours, and Site Safe passes.",
+            "Medical": "Look for specific clinical practicing registrations, healthcare certifications, and nursing/medical shift tenures.",
+            "General": "Evaluate standard organizational corporate requirements, software operations, and baseline career timelines."
+        }
+
+        context_hint = domain_mappings.get(industry_type, domain_mappings["General"])
+        
+        # Dynamically compile the updated system context framework
+        self.verifier.system_prompt = VERIFIER_SYSTEM_PROMPT_TEMPLATE.format(domain_context=context_hint)
 
         for category in categories:
             exec_output = self.executor.execute(category, job_text, cv_text)
@@ -296,25 +319,20 @@ class MultiAgentJobMatcher:
             try:
                 parsed = json.loads(exec_output)
 
-                # --- OPTION B: CONDITIONAL SCHEMA VALIDATION ---
                 if "skill" in category.lower():
                     validate(instance=parsed, schema=self.SKILLS_SCHEMA)
                 else:
                     validate(instance=parsed, schema=self.EXP_SCHEMA)
 
-                # Advisory Verifier step
+                # Upgraded semantic auditor checks for alignment
                 is_approved, verdict_text = self.verifier.verify(category, exec_output)
                 if not is_approved:
-                    print(
-                        f"[WARN] Verifier said REVISE for '{category}': {verdict_text}"
-                    )
+                    print(f"[WARN] Verifier said REVISE for '{category}': {verdict_text}")
 
                 validated_metrics.append(parsed)
 
             except (json.JSONDecodeError, ValidationError) as e:
-                print(
-                    f"\n[DEBUG WARNING]: Validation Failed for {category}. Error: {e}"
-                )
+                print(f"\n[DEBUG WARNING]: Validation Failed for {category}. Error: {e}")
                 print(f"[DEBUG WARNING]: Raw payload received: {exec_output}")
 
         return validated_metrics
@@ -327,28 +345,25 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
 
-    job_pdf = os.path.join(
-        project_root, "dataSet", DEFAULT_JOB_DIR, DEFAULT_JOB_FILE
-    )
+    job_pdf = os.path.join(project_root, "dataSet", DEFAULT_JOB_DIR, DEFAULT_JOB_FILE)
     cv_pdf = os.path.join(project_root, "dataSet", DEFAULT_CV_DIR, DEFAULT_CV_FILE)
 
     if not os.path.exists(job_pdf) or not os.path.exists(cv_pdf):
-        print(
-            f"Error: Could not find {DEFAULT_JOB_FILE} or {DEFAULT_CV_FILE}. Check your dataSet path setup."
-        )
+        print(f"Error: Could not find {DEFAULT_JOB_FILE} or {DEFAULT_CV_FILE}. Check your dataSet path setup.")
         exit(1)
 
     # Step 1: Extract Texts
     job_desc = DocumentParser.extract_text_from_pdf(job_pdf)
     cv_text = DocumentParser.extract_text_from_pdf(cv_pdf)
 
-    # Print model engine details for debugging
     print(f"Using Model Engine: {MODEL_NAME} | Temperature: {MODEL_TEMPERATURE}")
 
-    # Step 2: Extract Metrics using Multi-Agent Pipeline
+    # Step 2: Extract Metrics using Dynamic Context Pipeline
     matcher = MultiAgentJobMatcher()
     print("Running Semantic Agent Extraction Pipeline...")
-    extracted_data = matcher.extract_metrics(job_desc, cv_text)
+    
+    # Passing 'Tech' context parameter as an optimization strategy example
+    extracted_data = matcher.extract_metrics(job_desc, cv_text, industry_type="Tech")
 
     # Print extracted validated metrics for debugging
     print("\nValidated Metrics (raw JSON arrays collected):")
@@ -366,12 +381,8 @@ if __name__ == "__main__":
     print("OOP COMPUTED RELEVANCE SCORECARD REPORT")
     print("=" * 50)
     print(f"Overall Chance of Getting the Job: {report['final_relevance']}%")
-    print(
-        f"• Pillar A (Skills Profile Match): {report['skills_raw']} ({report['skills_percentage']}%)"
-    )
-    print(
-        f"• Pillar B (Seniority Alignment): {report['exp_raw']} ({report['experience_percentage']}%)"
-    )
+    print(f"• Pillar A (Skills Profile Match): {report['skills_raw']} ({report['skills_percentage']}%)")
+    print(f"• Pillar B (Seniority Alignment): {report['exp_raw']} ({report['experience_percentage']}%)")
     print("-" * 50)
     print(f"• Candidate years extracted: {report['candidate_years']}")
     print(f"• Target years required (job): {report['target_years']}")

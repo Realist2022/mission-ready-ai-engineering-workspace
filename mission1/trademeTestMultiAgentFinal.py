@@ -196,6 +196,14 @@ class RelevanceScoringEngine:
         self.skills_weight = skills_weight
         self.experience_weight = experience_weight
 
+    def _calculate_skills_score(self, matched: int, total: int) -> float:
+        return (matched / total * 100) if total > 0 else 0.0
+
+    def _calculate_experience_score(self, candidate_yrs: float, target_yrs: float) -> float:
+        if target_yrs <= 0:
+            return 0.0
+        return min((candidate_yrs / target_yrs) * 100, 100.0)
+
     def calculate_scorecard(self, validated_metrics: List[Dict]) -> Dict:
         total_skills_job = 0
         total_skills_cv = 0
@@ -213,14 +221,8 @@ class RelevanceScoringEngine:
                 candidate_years = float(metric.get("candidate_years_extracted", 0.0))
                 target_years = float(metric.get("target_years_required", 0.0))
 
-        skills_score = (
-            (total_skills_cv / total_skills_job * 100) if total_skills_job > 0 else 0.0
-        )
-        exp_score = (
-            min((candidate_years / target_years) * 100, 100.0)
-            if target_years > 0
-            else 0.0
-        )
+        skills_score = self._calculate_skills_score(total_skills_cv, total_skills_job)
+        exp_score = self._calculate_experience_score(candidate_years, target_years)
 
         final_relevance = (self.skills_weight * skills_score) + (
             self.experience_weight * exp_score

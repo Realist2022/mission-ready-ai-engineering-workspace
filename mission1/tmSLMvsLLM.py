@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from openai import OpenAI
 from pypdf import PdfReader
 from jsonschema import validate, ValidationError
@@ -11,12 +11,12 @@ from typer import prompt
 # 0. GLOBAL CONFIGURATION
 # ----------------------------------------------------------------------
 
-# from dotenv import load_dotenv
-# load_dotenv(override=True)
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# google_api_key = os.getenv('GOOGLE_API_KEY')
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+google_api_key = os.getenv('GOOGLE_API_KEY')
 
 # GPT Model Engine Settings
 # MODEL_NAME = "gpt-4o"
@@ -25,16 +25,16 @@ from typer import prompt
 # MODEL_TEMPERATURE = float(0.0)
 
 # OLLAMA Model Engine Settings
-MODEL_NAME = "llama3.2:latest"
-MODEL_BASE_URL = "http://localhost:11434/v1"
-MODEL_API_KEY = "ollama"
-MODEL_TEMPERATURE = float(0.0)
+# MODEL_NAME = "llama3.2:latest"
+# MODEL_BASE_URL = "http://localhost:11434/v1"
+# MODEL_API_KEY = "ollama"
+# MODEL_TEMPERATURE = float(0.0)
 
 # GOOGLE Model Engine Settings
-# MODEL_NAME = "gemini-3.1-flash-lite"
-# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-# MODEL_API_KEY = google_api_key
-# MODEL_TEMPERATURE = float(0.0)
+MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+MODEL_API_KEY = google_api_key
+MODEL_TEMPERATURE = float(0.0)
 
 
 # Weight Balancing (Ensure they add up to 1.0)
@@ -100,16 +100,6 @@ Rules:
 - Return valid JSON only. Do not wrap in markdown code blocks.
 - Set numeric defaults to 0.0 if no explicit timelines are found.
 """
-
-VERIFIER_SYSTEM_PROMPT = """
-You are the Recruitment Data Verifier agent.
-Verify if the EXECUTOR's extracted metrics structurally make sense relative to the category.
-
-Respond in one of two formats ONLY:
-1) APPROVE
-2) REVISE
-"""
-
 
 # ----------------------------------------------------------------------
 # 2. SEPARATED PROCESSING CLASSES
@@ -178,13 +168,6 @@ class ExecutorAgent:
         else:
             return self.exp_agent._call_llm(prompt)
 
-# Inheritance: Used specifically for the VerifierAgent to extend BaseAgent, adding a verification method.
-class VerifierAgent(BaseAgent):
-    def verify(self, category: str, executor_output: str) -> Tuple[bool, str]:
-        prompt = f"Category:\n{category}\n\nExecutor JSON Data:\n{executor_output}"
-        verdict = self._call_llm(prompt)
-        return verdict.strip().upper().startswith("APPROVE"), verdict
-
 
 # ----------------------------------------------------------------------
 # 3. DEDICATED MATHEMATICAL ENGINE CLASS
@@ -195,6 +178,14 @@ class RelevanceScoringEngine:
     def __init__(self, skills_weight: float = SKILLS_WEIGHT, experience_weight: float = EXPERIENCE_WEIGHT):
         self.skills_weight = skills_weight
         self.experience_weight = experience_weight
+
+    def _calculate_skills_score(self, matched: int, total: int) -> float:
+        return (matched / total * 100) if total > 0 else 0.0
+
+    def _calculate_experience_score(self, candidate_yrs: float, target_yrs: float) -> float:
+        if target_yrs <= 0:
+            return 0.0
+        return min((candidate_yrs / target_yrs) * 100, 100.0)
 
     def calculate_scorecard(self, validated_metrics: List[Dict]) -> Dict:
         total_skills_job = 0
@@ -213,14 +204,8 @@ class RelevanceScoringEngine:
                 candidate_years = float(metric.get("candidate_years_extracted", 0.0))
                 target_years = float(metric.get("target_years_required", 0.0))
 
-        skills_score = (
-            (total_skills_cv / total_skills_job * 100) if total_skills_job > 0 else 0.0
-        )
-        exp_score = (
-            min((candidate_years / target_years) * 100, 100.0)
-            if target_years > 0
-            else 0.0
-        )
+        skills_score = self._calculate_skills_score(total_skills_cv, total_skills_job)
+        exp_score = self._calculate_experience_score(candidate_years, target_years)
 
         final_relevance = (self.skills_weight * skills_score) + (
             self.experience_weight * exp_score
@@ -284,7 +269,6 @@ class MultiAgentJobMatcher:
     def __init__(self):
         self.client = OpenAI(base_url=MODEL_BASE_URL, api_key=MODEL_API_KEY)
         self.executor = ExecutorAgent(self.client)
-        self.verifier = VerifierAgent(self.client, VERIFIER_SYSTEM_PROMPT)
 
     def extract_metrics(self, job_text: str, cv_text: str) -> List[Dict]:
         categories = ["Core Technical Skills", "Seniority & Experience"]
@@ -301,13 +285,6 @@ class MultiAgentJobMatcher:
                     validate(instance=parsed, schema=self.SKILLS_SCHEMA)
                 else:
                     validate(instance=parsed, schema=self.EXP_SCHEMA)
-
-                # Advisory Verifier step
-                is_approved, verdict_text = self.verifier.verify(category, exec_output)
-                if not is_approved:
-                    print(
-                        f"[WARN] Verifier said REVISE for '{category}': {verdict_text}"
-                    )
 
                 validated_metrics.append(parsed)
 
