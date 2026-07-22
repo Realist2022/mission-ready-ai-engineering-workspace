@@ -25,6 +25,7 @@ from typer import prompt
 # MODEL_TEMPERATURE = float(0.0)
 
 # OLLAMA Model Engine Settings
+# MODEL_NAME = "deepseek-r1:1.5b"
 MODEL_NAME = "llama3.2:latest"
 MODEL_BASE_URL = "http://localhost:11434/v1"
 MODEL_API_KEY = "ollama"
