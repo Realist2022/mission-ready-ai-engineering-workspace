@@ -5,18 +5,18 @@ from openai import OpenAI
 from pypdf import PdfReader
 from jsonschema import validate, ValidationError
 from typer import prompt
-
+import time
 
 # ----------------------------------------------------------------------
 # 0. GLOBAL CONFIGURATION
 # ----------------------------------------------------------------------
 
-from dotenv import load_dotenv
-load_dotenv(override=True)
+# from dotenv import load_dotenv
+# load_dotenv(override=True)
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-google_api_key = os.getenv('GOOGLE_API_KEY')
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# google_api_key = os.getenv('GOOGLE_API_KEY')
 
 # GPT Model Engine Settings
 # MODEL_NAME = "gpt-4o"
@@ -25,21 +25,24 @@ google_api_key = os.getenv('GOOGLE_API_KEY')
 # MODEL_TEMPERATURE = float(0.0)
 
 # OLLAMA Model Engine Settings
-# MODEL_NAME = "llama3.2:latest"
-# MODEL_BASE_URL = "http://localhost:11434/v1"
-# MODEL_API_KEY = "ollama"
-# MODEL_TEMPERATURE = float(0.0)
+# MODEL_NAME = "deepseek-r1:1.5b"
+MODEL_NAME = "llama3.2:latest"
+MODEL_BASE_URL = "http://localhost:11434/v1"
+MODEL_API_KEY = "ollama"
+MODEL_TEMPERATURE = float(0.0)
 
 # GOOGLE Model Engine Settings
-MODEL_NAME = "gemini-3.1-flash-lite"
-MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODEL_API_KEY = google_api_key
-MODEL_TEMPERATURE = float(0.0)
+# MODEL_NAME = "gemini-3.1-flash-lite"
+# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# MODEL_API_KEY = google_api_key
+# MODEL_TEMPERATURE = float(0.0)
 
 
 # Weight Balancing (Ensure they add up to 1.0)
 SKILLS_WEIGHT = 0.60
 EXPERIENCE_WEIGHT = 0.40
+
+start = time.time()
 
 # (Validate they add up to 1.0)
 if (SKILLS_WEIGHT + EXPERIENCE_WEIGHT) != 1.0:
@@ -353,3 +356,5 @@ if __name__ == "__main__":
     print(f"• Candidate years extracted: {report['candidate_years']}")
     print(f"• Target years required (job): {report['target_years']}")
     print("=" * 50)
+
+    print("time:", time.time() - start, "seconds")
