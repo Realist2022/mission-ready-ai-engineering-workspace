@@ -1,10 +1,12 @@
 import os
 import json
+import time
 from typing import List
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from pypdf import PdfReader
 from dotenv import load_dotenv
+import time
 
 load_dotenv(override=True)
 
@@ -12,17 +14,23 @@ load_dotenv(override=True)
 # 0. GLOBAL CONFIGURATION
 # ----------------------------------------------------------------------
 
+start = time.time()
+
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+google_api_key = os.getenv('GOOGLE_API_KEY')
+
 # GOOGLE Model Engine Settings (Using OpenAI SDK Compatibility)
-# MODEL_NAME = "gemini-3.1-flash-lite"
-# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-# MODEL_API_KEY = os.getenv('GOOGLE_API_KEY')
-# MODEL_TEMPERATURE = 0.0
+MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+MODEL_API_KEY = os.getenv('GOOGLE_API_KEY')
+MODEL_TEMPERATURE = 0.0
 
 # OLLAMA Model Engine Settings
-MODEL_NAME = "llama3.2:latest"
-MODEL_BASE_URL = "http://localhost:11434/v1"
-MODEL_API_KEY = "ollama"
-MODEL_TEMPERATURE = float(0.0)
+# MODEL_NAME = "llama3.2:latest"
+# MODEL_BASE_URL = "http://localhost:11434/v1"
+# MODEL_API_KEY = "ollama"
+# MODEL_TEMPERATURE = float(0.0)
 
 # Weight Balancing
 SKILLS_WEIGHT = 0.60
@@ -193,3 +201,4 @@ if __name__ == "__main__":
     print(f"• Pillar B (Seniority Alignment): {report['exp_raw']} ({report['experience_percentage']}%)")
     print(f"  -> Roles applied: {', '.join(report['relevant_roles'])}")
     print("=" * 50)
+    print("time:", time.time() - start, "seconds")
