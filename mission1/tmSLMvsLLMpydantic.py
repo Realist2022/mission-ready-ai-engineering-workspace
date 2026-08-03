@@ -16,21 +16,21 @@ load_dotenv(override=True)
 
 start = time.time()
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-google_api_key = os.getenv('GOOGLE_API_KEY')
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# google_api_key = os.getenv('GOOGLE_API_KEY')
 
-# GOOGLE Model Engine Settings (Using OpenAI SDK Compatibility)
-MODEL_NAME = "gemini-3.1-flash-lite"
-MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODEL_API_KEY = os.getenv('GOOGLE_API_KEY')
-MODEL_TEMPERATURE = 0.0
+# # GOOGLE Model Engine Settings (Using OpenAI SDK Compatibility)
+# MODEL_NAME = "gemini-3.1-flash-lite"
+# MODEL_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# MODEL_API_KEY = os.getenv('GOOGLE_API_KEY')
+# MODEL_TEMPERATURE = 0.0
 
 # OLLAMA Model Engine Settings
-# MODEL_NAME = "llama3.2:latest"
-# MODEL_BASE_URL = "http://localhost:11434/v1"
-# MODEL_API_KEY = "ollama"
-# MODEL_TEMPERATURE = float(0.0)
+MODEL_NAME = "llama3.2:latest"
+MODEL_BASE_URL = "http://localhost:11434/v1"
+MODEL_API_KEY = "ollama"
+MODEL_TEMPERATURE = float(0.0)
 
 # Weight Balancing
 SKILLS_WEIGHT = 0.60
