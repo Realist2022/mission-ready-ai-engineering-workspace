@@ -14,6 +14,7 @@ def has_proper_length(text, min_len=10, max_len=500):
 
 safe_text = "The weather is nice today."
 unsafe_text = "This contains hate speech."
+another_unsafe_text = "This is illegal content."
 
 short_text = "Hi"
 good_text = "This is a reasonable length response with useful information."
@@ -23,6 +24,7 @@ long_text = "A" * 600  # Too long
 print("\nContent Safety:")
 print(is_safe_content(safe_text))     # True
 print(is_safe_content(unsafe_text))   # False
+print(is_safe_content(another_unsafe_text))   # False
 
 print("\nLength Validation:")
 print(has_proper_length(short_text))  # False (too short)
